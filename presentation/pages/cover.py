@@ -34,20 +34,10 @@ layout = html.Div(
         # Hero block
         html.Div(
             [
-                html.Div(
-                    "Le Wagon · Decision Science",
-                    className="text-uppercase text-info mb-3",
-                    style={"letterSpacing": "0.3rem", "fontSize": "0.9rem"},
-                ),
                 html.H1(
                     "CEO Request",
                     className="display-1 fw-bold mb-3",
                     style={"letterSpacing": "-0.02em"},
-                ),
-                html.H3(
-                    "Should we remove under-performing sellers?",
-                    className="text-secondary fst-italic",
-                    style={"fontWeight": 300},
                 ),
             ],
             className="text-center mb-5",
