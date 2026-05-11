@@ -6,7 +6,15 @@ import dash_bootstrap_components as dbc
 import plotly.graph_objects as go
 import numpy as np
 import sys, os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Go up to 03-Decision-Science so `from olist.X import ...` works.
+# Layout: 03-Decision-Science / 03-Logistic-Regression / data-olist_ceo_request
+#         / presentation / pages / this file.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_DECISION_SCIENCE = os.path.normpath(os.path.join(_HERE, "..", "..", "..", ".."))
+if _DECISION_SCIENCE not in sys.path:
+    sys.path.insert(0, _DECISION_SCIENCE)
+
+import pandas as pd
 
 from olist.seller import Seller
 from olist.data import Olist
@@ -17,6 +25,16 @@ dash.register_page(__name__, path="/profitability", name="Profitability", order=
 sellers = Seller().get_training_data()
 alpha = 3157.27
 beta = 978.23
+
+# Sellers' meta (per-seller review cost) is available from the panel build.
+_META_PATH = os.path.normpath(
+    os.path.join(_HERE, "..", "..", "data", "sellers_meta.parquet")
+)
+_meta = pd.read_parquet(_META_PATH)[["seller_id", "total_review_cost"]]
+sellers = sellers.merge(_meta, on="seller_id", how="left")
+sellers["cost_of_reviews"] = sellers["total_review_cost"].fillna(0.0)
+sellers["revenues"] = sellers["sales"] * 0.10 + sellers["months_on_olist"] * 80
+sellers["profits"] = sellers["revenues"] - sellers["cost_of_reviews"]
 
 loss_sellers = sellers[sellers['profits'] < 0]
 profitable_sellers = sellers[sellers['profits'] >= 0]

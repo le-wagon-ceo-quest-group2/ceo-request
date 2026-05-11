@@ -27,7 +27,7 @@ navbar = dbc.NavbarSimple(
         )
         for page in sorted(dash.page_registry.values(), key=lambda p: p.get("order", 99))
     ],
-    brand="Olist CEO Request — Should we remove under-performing sellers?",
+    brand="",
     brand_href="/",
     color="dark",
     dark=True,
