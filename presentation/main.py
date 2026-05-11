@@ -19,6 +19,8 @@ app = Dash(
     suppress_callback_exceptions=True,
     title="Olist CEO Request",
 )
+# Expose the underlying Flask server for WSGI deployment (gunicorn picks this up).
+server = app.server
 
 navbar = dbc.NavbarSimple(
     children=[

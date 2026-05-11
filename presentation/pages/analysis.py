@@ -1,87 +1,24 @@
 """Page: Sales & Negative Reviews by Brazilian State.
 
-Adapted from Mario's standalone analysis notebook into a Dash page. Loads raw
-Olist CSVs and computes state-level aggregates inline (no `bi_data` dependency).
+Adapted from Mario's standalone analysis notebook. Data and GeoJSON are loaded
+from pre-computed assets under `data/` — no `olist` package or raw CSVs needed.
 """
 
 import os
-import sys
+import json
 
 import dash
 from dash import html, dcc
 import dash_bootstrap_components as dbc
-import numpy as np
 import pandas as pd
 import plotly.express as px
 
-# Ensure the local `olist` package is importable
-_HERE = os.path.dirname(os.path.abspath(__file__))
-_DECISION_SCIENCE = os.path.normpath(os.path.join(_HERE, "..", "..", "..", ".."))
-if _DECISION_SCIENCE not in sys.path:
-    sys.path.insert(0, _DECISION_SCIENCE)
-
 dash.register_page(__name__, path="/analysis", name="State Analysis", order=4)
 
-DATA_DIR = os.path.expanduser("~/.lewagon/olist/data/csv")
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_DATA = os.path.normpath(os.path.join(_HERE, "..", "..", "data"))
 
-
-# --------------------------------------------------------------------------- #
-# Load raw data
-# --------------------------------------------------------------------------- #
-
-def _load_state_data():
-    orders = pd.read_csv(
-        f"{DATA_DIR}/olist_orders_dataset.csv",
-        usecols=["order_id", "customer_id", "order_status"],
-    )
-    customers = pd.read_csv(
-        f"{DATA_DIR}/olist_customers_dataset.csv",
-        usecols=["customer_id", "customer_state"],
-    )
-    items = pd.read_csv(
-        f"{DATA_DIR}/olist_order_items_dataset.csv",
-        usecols=["order_id", "price", "freight_value"],
-    )
-    reviews = pd.read_csv(
-        f"{DATA_DIR}/olist_order_reviews_dataset.csv",
-        usecols=["order_id", "review_score"],
-    )
-
-    orders_kept = orders[~orders.order_status.isin(("canceled", "unavailable"))]
-    order_state = orders_kept.merge(customers, on="customer_id", how="inner")[
-        ["order_id", "customer_state"]
-    ]
-
-    # Per-state sales total (price-only, no freight, consistent with Olist convention)
-    items_by_order = items.groupby("order_id", as_index=False)["price"].sum()
-    sales_per_order = order_state.merge(items_by_order, on="order_id", how="inner")
-    state_sales = (
-        sales_per_order.groupby("customer_state", as_index=False)["price"]
-        .sum()
-        .rename(columns={"price": "sales"})
-        .sort_values("sales", ascending=False)
-    )
-    state_sales["sales_pct"] = state_sales["sales"] / state_sales["sales"].sum() * 100
-
-    # Per-state review aggregates (negative = score ≤ 3)
-    reviews_state = reviews.merge(order_state, on="order_id", how="inner")
-    reviews_state["is_negative"] = reviews_state["review_score"] <= 3
-    review_by_state = (
-        reviews_state.groupby("customer_state", as_index=False)
-        .agg(
-            total_reviews=("review_score", "count"),
-            negative_reviews=("is_negative", "sum"),
-        )
-    )
-    review_by_state["negative_review_pct"] = (
-        review_by_state["negative_reviews"] / review_by_state["total_reviews"] * 100
-    ).round(2)
-
-    state = state_sales.merge(review_by_state, on="customer_state", how="left")
-    return state
-
-
-state = _load_state_data()
+state = pd.read_parquet(os.path.join(_DATA, "state_analysis.parquet"))
 avg_neg = state["negative_review_pct"].mean()
 
 
@@ -89,9 +26,8 @@ avg_neg = state["negative_review_pct"].mean()
 # Figures
 # --------------------------------------------------------------------------- #
 
-# Top-10 bar
 fig_top10 = px.bar(
-    state.head(10),
+    state.sort_values("sales", ascending=False).head(10),
     x="customer_state",
     y="sales",
     color="sales",
@@ -102,7 +38,6 @@ fig_top10 = px.bar(
 )
 fig_top10.update_layout(height=420, coloraxis_showscale=False)
 
-# All states horizontal
 fig_all = px.bar(
     state.sort_values("sales", ascending=True),
     x="sales",
@@ -116,7 +51,6 @@ fig_all = px.bar(
 )
 fig_all.update_layout(height=700, coloraxis_showscale=False)
 
-# Cumulative concentration
 state_sorted = state.sort_values("sales", ascending=False).reset_index(drop=True)
 state_sorted["cum_pct"] = state_sorted["sales_pct"].cumsum()
 fig_cum = px.line(
@@ -137,7 +71,6 @@ fig_cum.add_hline(
 )
 fig_cum.update_layout(height=400)
 
-# Sales vs negative review scatter
 fig_scatter = px.scatter(
     state,
     x="sales_pct",
@@ -165,17 +98,12 @@ fig_scatter.add_hline(
 fig_scatter.update_traces(textposition="top center")
 fig_scatter.update_layout(height=500)
 
-
-# Brazil choropleth (best-effort: requires internet for the geojson)
+# Brazil choropleth — read bundled GeoJSON
 fig_map = None
-try:
-    import requests
-
-    geojson_url = (
-        "https://raw.githubusercontent.com/codeforamerica/click_that_hood/"
-        "master/public/data/brazil-states.geojson"
-    )
-    brazil_geo = requests.get(geojson_url, timeout=5).json()
+_geo_path = os.path.join(_DATA, "brazil-states.geojson")
+if os.path.exists(_geo_path):
+    with open(_geo_path) as _f:
+        brazil_geo = json.load(_f)
     fig_map = px.choropleth(
         state,
         geojson=brazil_geo,
@@ -199,11 +127,8 @@ try:
         template="plotly_dark",
         margin={"r": 0, "t": 60, "l": 0, "b": 0},
     )
-except Exception:
-    pass  # we'll just omit the map if offline
 
 
-# Risky states: low sales share, high negative review rate
 risky = state[
     (state["sales_pct"] < 2) & (state["negative_review_pct"] > avg_neg)
 ].sort_values("negative_review_pct", ascending=False)
@@ -260,40 +185,32 @@ layout = html.Div([
     dbc.Row(
         [
             dbc.Col(
-                dbc.Card(
-                    dbc.CardBody([
-                        html.H6("Total states", className="text-muted"),
-                        html.H3(f"{len(state)}"),
-                    ])
-                ),
+                dbc.Card(dbc.CardBody([
+                    html.H6("Total states", className="text-muted"),
+                    html.H3(f"{len(state)}"),
+                ])),
                 md=3,
             ),
             dbc.Col(
-                dbc.Card(
-                    dbc.CardBody([
-                        html.H6("Top-1 state share", className="text-muted"),
-                        html.H3(f"{state['sales_pct'].iloc[0]:.1f}%"),
-                        html.Small(state["customer_state"].iloc[0], className="text-info"),
-                    ])
-                ),
+                dbc.Card(dbc.CardBody([
+                    html.H6("Top-1 state share", className="text-muted"),
+                    html.H3(f"{state_sorted['sales_pct'].iloc[0]:.1f}%"),
+                    html.Small(state_sorted["customer_state"].iloc[0], className="text-info"),
+                ])),
                 md=3,
             ),
             dbc.Col(
-                dbc.Card(
-                    dbc.CardBody([
-                        html.H6("Avg negative review rate", className="text-muted"),
-                        html.H3(f"{avg_neg:.1f}%"),
-                    ])
-                ),
+                dbc.Card(dbc.CardBody([
+                    html.H6("Avg negative review rate", className="text-muted"),
+                    html.H3(f"{avg_neg:.1f}%"),
+                ])),
                 md=3,
             ),
             dbc.Col(
-                dbc.Card(
-                    dbc.CardBody([
-                        html.H6("Risky states (low sales, high neg %)", className="text-muted"),
-                        html.H3(f"{len(risky)}", className="text-warning"),
-                    ])
-                ),
+                dbc.Card(dbc.CardBody([
+                    html.H6("Risky states (low sales, high neg %)", className="text-muted"),
+                    html.H3(f"{len(risky)}", className="text-warning"),
+                ])),
                 md=3,
             ),
         ],
